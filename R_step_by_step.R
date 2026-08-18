@@ -26,12 +26,9 @@
 debug <- 0;
 knitr::opts_chunk$set(echo=debug>-1, warning=debug>0, message=debug>0, class.output="scroll-20", attr.output='style="max-height: 150px; overflow-y: auto;"');
 
-library(ggplot2); # visualisation
-library(GGally);
 library(rio);# simple command for importing and exporting
 library(pander); # format tables
 #library(printr); # set limit on number of lines printed
-library(broom); # allows to give clean dataset
 library(dplyr); #add dplyr library
 
 options(max.print=500);
@@ -290,8 +287,8 @@ max(bat)
 #' that inherits from `data.frame`. The `dplyr` package makes working with
 #' `data.frames` easier and a lot of attention will be devoted to `dplyr`
 #' [below](#data-frames-indepth). For now, here are some basic commands for
-#' exploring `data.frames`: `dim()`, `nrow()`, `ncol()`, `names()` and (for
-#' small datasets) `plot()`.
+#' exploring `data.frames`: `dim()`, `nrow()`, `ncol()`, `names()`, `str()`,
+#' and `summary()`.
 
 #+ df_explore
 dim(iris)
@@ -301,6 +298,8 @@ names(iris)
 head(iris)
 tail(iris)
 head(iris,10)
+str(iris)
+summary(iris)
 #' how to select rows
 #+ df_subset
 iris[3:20,]
@@ -333,27 +332,313 @@ iris[4:10,prevar]
 
 #' # Datasets and `dplyr`
 #+ Working with datasets and DPLYR
+#'
+#' The `%>%` operator takes the result on its left and gives it to the function
+#' on its right as the first argument. This makes it easier to read a series of
+#' steps from left to right instead of nesting functions inside one another.
 
+#+ dplyr_pipe
+iris %>% head()
+iris %>% head(10)
 
-#' # Linear Models
-#+ linear_models
-example(lm) # a sample for linear model
+#' ## Selecting rows and columns
+#'
+#' `select()` keeps columns. `filter()` keeps rows based on a logical condition.
+#' `arrange()` changes the order of rows. `desc()` reverses the order for one
+#' variable inside `arrange()`.
 
-perf <- lm(mpg~hp+wt+qsec,mtcars)
-summary(perf) # gives detail summary
-summary(perf)$coeff # gives coefficient column
-glance(perf) #gives brief
-tidy(perf) # gives tidy cleaner version inside
-lm(mpg~hp+wt+vs,mtcars) %>% tidy() %>% select(c("estimate","p.value"))
-#+ Debugging
-perf %>% tidy() %>% select(c("estimate","p.value"))
-perf %>% tidy() %>% select(c("estimate","p.value")) %>% slice(-1) # removes top row
-perf %>% tidy() %>% select(c("estimate","p.value")) %>% slice((1:3)) # gives 1 to 3 rows
-perf %>% tidy() %>% select(c("estimate","p.value")) %>% slice(-(1:3)) # removes 1 to 3 rwos
-whatisthis(perf) # gives class of the variable
+#+ dplyr_select_filter_arrange
+iris %>% select(Sepal.Length,Sepal.Width,Species) %>% head()
+iris %>% filter(Species=='setosa') %>% head()
+iris %>% filter(Sepal.Length>5,Sepal.Width>3) %>% head()
+iris %>% arrange(Sepal.Length,desc(Sepal.Width)) %>% head()
 
-#' `View(perf)` # view inside of object
+#' You can use `select()` helpers when it would be inconvenient to type every
+#' column name separately.
 
-#+ ## multiple comparison
-perf %>% tidy() %>% select(c("p.value")) %>% slice(-1)
-perf %>% tidy() %>% select(c("p.value")) %>% slice(-1) %>% unlist() %>% p.adjust()
+#+ dplyr_select_helpers
+iris %>% select(starts_with('Sepal')) %>% head()
+iris %>% select(where(is.numeric)) %>% head()
+iris %>% select(-Species) %>% head()
+
+#' ## Creating or changing columns
+#'
+#' `mutate()` creates new columns or changes existing ones. New columns created
+#' earlier in the same `mutate()` can be used to create later columns.
+
+#+ dplyr_mutate
+iris %>% mutate(Sepal.Area=Sepal.Length*Sepal.Width) %>% head()
+iris %>% mutate(Petal.Ratio=Petal.Length/Petal.Width
+                ,Inverse.Ratio=1/Petal.Ratio
+                ,Species=toupper(Species)) %>% head()
+
+#' `case_when()` is useful when the value you want in a new column depends on
+#' several logical conditions.
+
+#+ dplyr_case_when
+iris %>% mutate(Sepal.Size=case_when(
+  Sepal.Length<5 ~ 'small'
+  ,Sepal.Length<6 ~ 'medium'
+  ,TRUE ~ 'large'
+)) %>% select(Sepal.Length,Sepal.Size) %>% head(10)
+
+#' You can use `relocate()` to change where columns appear without changing
+#' their values.
+
+#+ dplyr_relocate
+iris %>% mutate(Sepal.Area=Sepal.Length*Sepal.Width) %>%
+  relocate(Sepal.Area) %>% head()
+
+#' ## Summarizing data
+#'
+#' `summarise()` returns summary values instead of the original rows. `n()`
+#' gives the number of rows being summarized.
+
+#+ dplyr_summarise
+iris %>% summarise(Median=median(Sepal.Length)
+                   ,Average=mean(Sepal.Length)
+                   ,N=n())
+
+#' `group_by()` changes later operations so that they happen separately within
+#' each group. It is most commonly followed by `summarise()` or `mutate()`.
+
+#+ dplyr_group_by
+iris %>% group_by(Species) %>% summarise(Median=median(Sepal.Length)
+                                         ,Average=mean(Sepal.Length)
+                                         ,N=n())
+iris %>% group_by(Species) %>% mutate(Species.Mean=mean(Sepal.Length)) %>% head()
+
+#' `across()` applies the same function to several columns. `where()` selects
+#' columns based on what kind of data they contain.
+
+#+ dplyr_across
+iris %>% summarise(across(where(is.numeric),mean))
+iris %>% group_by(Species) %>% summarise(across(where(is.numeric),mean))
+iris %>% mutate(across(where(is.numeric),round)) %>% head()
+
+#' You can apply more than one summary function to the same set of columns by
+#' passing a named list of functions to `across()`.
+
+#+ dplyr_across_multiple
+iris %>% group_by(Species) %>%
+  summarise(across(where(is.numeric)
+                   ,list(mean=mean,median=median)))
+
+#' ## Missing values in data frames
+#'
+#' `is.na()` identifies missing values. Many summary functions will return `NA`
+#' if any input is missing unless you use `na.rm=TRUE`.
+
+#+ df_missing
+missing_example <- head(iris,6)
+missing_example$Sepal.Length[c(2,5)] <- NA
+missing_example
+is.na(missing_example$Sepal.Length)
+sum(is.na(missing_example$Sepal.Length))
+mean(missing_example$Sepal.Length)
+mean(missing_example$Sepal.Length,na.rm=TRUE)
+missing_example %>% filter(!is.na(Sepal.Length))
+
+#' `coalesce()` returns the first non-missing value. A common use is replacing
+#' missing values with some explicitly chosen value.
+
+#+ df_coalesce
+missing_example %>% mutate(Sepal.Length=coalesce(Sepal.Length,0))
+
+#' Be careful when doing this with real data. Zero and missing are usually
+#' different things. The example above is demonstrating the syntax, not saying
+#' that missing measurements should generally be replaced by zero.
+
+#' ## Turning numeric values into categories
+#'
+#' `cut()` creates a factor by splitting numeric values at specified cutpoints.
+#' Use `-Inf` and `Inf` when you want the first and last groups to include every
+#' possible value below and above the interior cutpoints.
+
+#+ df_cut
+sepal_length_group <- cut(iris$Sepal.Length
+                          ,c(-Inf,5,6,Inf)
+                          ,labels=c('short','medium','long'))
+sepal_length_group %>% table(useNA='ifany')
+levels(sepal_length_group)
+
+#' You can also add the resulting factor directly to a data frame.
+
+#+ df_cut_mutate
+iris %>% mutate(Sepal.Length.Group=cut(Sepal.Length
+                                       ,c(-Inf,5,6,Inf)
+                                       ,labels=c('short','medium','long'))) %>%
+  head()
+
+#' ## Combining data frames
+#'
+#' `bind_rows()` stacks data frames with compatible columns. The examples below
+#' create their inputs directly from `iris`.
+
+#+ df_bind_rows
+iris_first <- head(iris,3)
+iris_last <- tail(iris,3)
+bind_rows(iris_first,iris_last)
+
+#' `bind_cols()` puts data frames or vectors next to each other. This only makes
+#' sense when the rows are already in the same order and refer to the same
+#' observations.
+
+#+ df_bind_cols
+iris_measurements <- iris[,1:4]
+iris_species <- iris["Species"]
+bind_cols(iris_measurements,iris_species) %>% head()
+
+#' ## Joining data frames
+#'
+#' Joins combine data frames by matching one or more key columns. Here we make
+#' a small lookup table for the three species in `iris`.
+
+#+ df_join
+species_lookup <- data.frame(
+  Species=levels(iris$Species)
+  ,Group=c('A','B','C')
+)
+species_lookup
+
+#' `left_join()` keeps every row from the data frame on the left and adds
+#' matching information from the data frame on the right.
+
+#+ df_left_join
+iris %>% left_join(species_lookup,by='Species') %>% head()
+
+#' `inner_join()` keeps only rows whose key occurs in both data frames.
+
+#+ df_inner_join
+species_lookup2 <- data.frame(
+  Species=c('setosa','versicolor')
+  ,Group=c('A','B')
+)
+iris %>% inner_join(species_lookup2,by='Species') %>% head()
+iris %>% inner_join(species_lookup2,by='Species') %>% nrow()
+
+#' ## Changing between wide and long data
+#'
+#' Some analyses need one row per observation with several measurement columns;
+#' others need one row per measurement. `pivot_longer()` and `pivot_wider()`
+#' change between these two arrangements. These functions are in the `tidyr`
+#' package, so here we use `tidyr::` before the function name instead of loading
+#' the whole package.
+
+#+ df_reshape
+iris_small <- head(iris,3) %>% mutate(ID=seq_len(n()))
+iris_small
+
+iris_long <- iris_small %>% tidyr::pivot_longer(
+  cols=c(Sepal.Length,Sepal.Width,Petal.Length,Petal.Width)
+  ,names_to='Measure'
+  ,values_to='Value'
+)
+iris_long
+
+iris_wide <- iris_long %>% tidyr::pivot_wider(
+  names_from=Measure
+  ,values_from=Value
+)
+iris_wide
+
+#' ## Importing and exporting data
+#'
+#' `rio::export()` chooses the output format based on the file extension.
+#' `rio::import()` does the same thing when reading a file.
+
+#+ file_import_export
+example_file <- tempfile(fileext='.csv')
+rio::export(iris,example_file)
+iris_imported <- rio::import(example_file)
+head(iris_imported)
+file.remove(example_file)
+
+#' `list.files()` can be used to see files in a folder. `tempdir()` gives a
+#' temporary folder that R can safely use for examples on any computer.
+
+#+ file_list
+example_folder <- tempdir()
+list.files(example_folder)
+
+#' If several data files are stored in one folder, `list.files()` with
+#' `full.names=TRUE` returns the complete path to each file. Here we create two
+#' files first so the example does not depend on anything already being on your
+#' computer.
+
+#+ file_import_multiple
+example_folder <- tempfile()
+dir.create(example_folder)
+rio::export(head(iris,5),file.path(example_folder,'iris1.csv'))
+rio::export(tail(iris,5),file.path(example_folder,'iris2.csv'))
+
+example_files <- list.files(example_folder
+                            ,pattern='[.]csv$'
+                            ,full.names=TRUE)
+example_files
+
+example_data <- sapply(example_files,import,simplify=FALSE) %>%
+  setNames(basename(example_files))
+names(example_data)
+example_data$iris1.csv
+unlink(example_folder,recursive=TRUE)
+
+#' # Randomness and reproducibility
+#'
+#' Functions such as `sample()`, `runif()`, and `rnorm()` generate random
+#' values. Random functions normally give different results each time.
+
+#+ randomness
+sample(1:10,5)
+runif(5)
+rnorm(5,mean=10,sd=2)
+
+#' `set.seed()` lets you reproduce the same random result. If you use the same
+#' seed immediately before the same random operation, you get the same result.
+
+#+ randomness_seed
+set.seed(5050)
+sample(1:10,5)
+set.seed(5050)
+sample(1:10,5)
+
+#' This is useful when random sampling is part of an analysis and you want
+#' somebody else to be able to reproduce exactly what you did.
+
+#+ randomness_dataframe
+set.seed(5050)
+iris_sample <- iris[sample(seq_len(nrow(iris)),10),]
+iris_sample
+
+#' # Writing simple functions
+#'
+#' A function lets you give a name to a reusable operation. Arguments listed
+#' inside `function()` become temporary variables whose values are supplied when
+#' the function is called.
+
+#+ simple_function
+convert_inches <- function(cm){
+  cm/2.54
+}
+convert_inches(10)
+convert_inches(iris$Sepal.Length) %>% head()
+
+#' Functions can have more than one argument.
+
+#+ simple_function_multiple
+range_size <- function(low,high){
+  high-low
+}
+range_size(3,8)
+range_size(min(iris$Sepal.Length),max(iris$Sepal.Length))
+
+#' Arguments can also have default values. If a value with a default is not
+#' supplied when the function is called, R uses the default.
+
+#+ simple_function_default
+convert_temperature <- function(x,from='C'){
+  if(from=='C') return(x*9/5+32)
+  if(from=='F') return((x-32)*5/9)
+}
+convert_temperature(0)
+convert_temperature(32,from='F')
