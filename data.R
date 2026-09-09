@@ -29,10 +29,11 @@ knitr::opts_chunk$set(echo=debug>-1, warning=debug>0, message=debug>0, class.out
 #Load tools ----
 library(rio);# simple command for importing and exporting
 library(pander); # format tables
-#library(printr); # set limit on number of lines printed
+library(printr); # set limit on number of lines printed
 library(dplyr); #add dplyr library
 library(lubridate) #date manipulation
 library(stringr) #string manipulation
+library(tidyr) #to use pivot_wider function
 
 options(max.print=500);
 panderOptions('table.split.table',Inf); panderOptions('table.split.cells',Inf);
@@ -103,7 +104,32 @@ condition_slopes <- mutate(dat$conditions.csv, month=floor_date(START, unit = "m
 plot(condition_slopes$events, type="l")
 abline(v=25,col="blue") #25 reasonable cut-off for conditions
 
-top_condition_slopes <- head(condition_slopes, 25)
+top_condition_slopes <- head(condition_slopes, 25)$CODE #empty space before comma means all the rows and empty space after comma means all the columns
 
+#DESCRIPTION and CODE  mapping
+code_map<-dat$conditions.csv[c("CODE","DESCRIPTION")] %>% unique() %>% #removes duplicate rows
+  {setNames(.$DESCRIPTION,.$CODE)} #no longer dataframe but now a vector with names, curly brakets
 
+#search within df code_map without having to call the dataframe
+code_map<-dat$conditions.csv[c("CODE","DESCRIPTION")] %>% unique() %>% #removes duplicate rows
+  with(setNames(DESCRIPTION, CODE))#turns 1st argument into an environment to just include variable, ie columns, in the dataframe
 
+#code to co-occurence, pulls all the conditions a patient has that falls in the top conditions
+patient_codes <- filter(dat$conditions.csv, CODE %in% top_condition_slopes)[c("PATIENT","CODE")] %>% #%in% filters for value within vector
+  unique() %>% #keeps the unique rows, tells you number of unique values to de-duplicate
+  mutate(present=1) %>% #define 1 as present
+  pivot_wider(names_from = CODE, values_from = present, values_fill = 0) %>% #each patient is a row, and each column a condition, replaces NA with 0
+  select(-PATIENT) # select() behaves more predictably than .[] or .$ callouts
+
+#determine number of unique patient IDs and construct list of pairwaise combinations of codes
+n_patients<-nrow(dat$patients.csv) #7946 total number of patients
+code_combos <- combn(top_condition_slopes, 2, simplify = FALSE) #all possible pairwise conditions in list form
+
+#
+fn_lift <- function(xx){
+  counta <- sum(patient_codes[[ xx[1] ]])
+  countb <- sum(patient_codes[[ xx[2] ]])
+  browser()
+}
+
+#[[]] pull item by position, [] pulls item within list
