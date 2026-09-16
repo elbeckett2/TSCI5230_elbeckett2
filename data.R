@@ -34,6 +34,7 @@ library(dplyr); #add dplyr library
 library(lubridate) #date manipulation
 library(stringr) #string manipulation
 library(tidyr) #to use pivot_wider function
+library(purrr)
 
 options(max.print=500);
 panderOptions('table.split.table',Inf); panderOptions('table.split.cells',Inf);
@@ -106,7 +107,7 @@ abline(v=25,col="blue") #25 reasonable cut-off for conditions
 
 top_condition_slopes <- head(condition_slopes, 25)$CODE #empty space before comma means all the rows and empty space after comma means all the columns
 
-#DESCRIPTION and CODE  mapping
+#DESCRIPTION and CODE  mapping ----
 code_map<-dat$conditions.csv[c("CODE","DESCRIPTION")] %>% unique() %>% #removes duplicate rows
   {setNames(.$DESCRIPTION,.$CODE)} #no longer dataframe but now a vector with names, curly brakets
 
@@ -115,21 +116,50 @@ code_map<-dat$conditions.csv[c("CODE","DESCRIPTION")] %>% unique() %>% #removes 
   with(setNames(DESCRIPTION, CODE))#turns 1st argument into an environment to just include variable, ie columns, in the dataframe
 
 #code to co-occurence, pulls all the conditions a patient has that falls in the top conditions
-patient_codes <- filter(dat$conditions.csv, CODE %in% top_condition_slopes)[c("PATIENT","CODE")] %>% #%in% filters for value within vector
-  unique() %>% #keeps the unique rows, tells you number of unique values to de-duplicate
-  mutate(present=1) %>% #define 1 as present
-  pivot_wider(names_from = CODE, values_from = present, values_fill = 0) %>% #each patient is a row, and each column a condition, replaces NA with 0
-  select(-PATIENT) # select() behaves more predictably than .[] or .$ callouts
+paitent_codes <- filter(dat$conditions.csv,CODE %in% top_condition_slopes)%>% #%in% filters for a value within a vector, unique keeps all different rows,
+  distinct(PATIENT, CODE) %>% #drops columns not referencing and condensing to columns of interest
+  mutate(present=1) %>% 
+  pivot_wider(names_from = CODE, values_from= present, values_fill = 0 )
+encounter_codes <- filter(dat$conditions.csv,CODE %in% top_condition_slopes)%>% #%in% filters for a value within a vector, unique keeps all different rows,
+  distinct(ENCOUNTER, CODE) %>% 
+  mutate(present=1) %>% 
+  pivot_wider(names_from = CODE, values_from= present, values_fill = 0 )
 
 #determine number of unique patient IDs and construct list of pairwaise combinations of codes
 n_patients<-nrow(dat$patients.csv) #7946 total number of patients
+n_encounters<-nrow(dat$encounters.csv) #number of encounters
 code_combos <- combn(top_condition_slopes, 2, simplify = FALSE) #all possible pairwise conditions in list form
 
-#
-fn_lift <- function(xx){
-  counta <- sum(patient_codes[[ xx[1] ]])
-  countb <- sum(patient_codes[[ xx[2] ]])
-  browser()
+#Create function to quantify number of conditions, when conditions overlap by a pair basis, output as square matrix
+fn_lift <- function(xx, code_source=patient_codes,denom=n_patients){
+  counta <- sum(code_source[[ xx[1] ]]) #[[]] pull item by position, [] pulls item within list
+  countb <- sum(code_source[[ xx[2] ]])
+  expected <- counta*countb/denom
+  observed <- sum(code_source[[ xx[1] ]]*code_source[[ xx[2] ]])
+  out <- if(expected == 0){1} else{observed/expected}
+  data.frame(cnd_a=xx[],cnd_b=rev(xx[]),lift=out) #create square matrix
 }
 
-#[[]] pull item by position, [] pulls item within list
+#Create lift matrix for co-occurrence of conditions and heat map
+patient_lift_matrix <- map(code_combos, fn_lift) %>% list_rbind() %>%
+  mutate(cnd_a=code_map[cnd_a]) %>% 
+  mutate(cnd_b=code_map[cnd_b]) %>% 
+  xtabs(lift~cnd_a+cnd_b,data=.)
+heatmap(log1p(patient_lift_matrix), symm=T,scale="none",col=hcl.colors(50, "RdBu", rev=TRUE))
+
+rownames(patient_lift_matrix)
+colnames(patient_lift_matrix)
+code_map[rownames(patient_lift_matrix)]
+
+#Co-occurence of codes in same patient at same visit
+encounter_lift_matrix <- map(code_combos, fn_lift, code_source=encounter_codes, denom=n_encounters) %>% list_rbind() %>%
+  mutate(cnd_a=code_map[cnd_a]) %>% 
+  mutate(cnd_b=code_map[cnd_b]) %>% 
+  xtabs(lift~cnd_a+cnd_b,data=.)
+e_map<-heatmap(log1p(encounter_lift_matrix), symm=T,scale="none",col=hcl.colors(50, "RdBu", rev=TRUE))
+colnames(encounter_lift_matrix)[e_map$colInd]
+
+#xtabs cross tabulates a data frame
+
+
+
