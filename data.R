@@ -67,7 +67,7 @@ patients$age_at_time_death <- age_at_death(patients$BIRTHDATE,patients$DEATHDATE
 conditions <- dat$conditions.csv
 conditions_description_types <- table(conditions$DESCRIPTION)
 
-# PRELIM: Acute pharyngitis ----
+# Example: Acute pharyngitis ----
 #Elena's code 08/26/2026
 
 # First, subset to acute/viral conditions
@@ -87,20 +87,17 @@ acute_viral <- conditions %>%
     )
   )
 
-
-#Regression between conditions and time  ----
-  
 #Example Acute Viral Pharyngitis
 temp <- filter(dat$conditions.csv,(DESCRIPTION =="Acute viral pharyngitis (disorder)")) %>%
   mutate(month=floor_date(START, unit = "month")) %>% 
   group_by(month) %>% summarize(count=n())
 lm(count~month,temp)
 
-#Regressions for all conditions over time
-condition_slopes <- mutate(dat$conditions.csv, month=floor_date(START, unit = "month")) %>% #create data frame
-  group_by(month, CODE, DESCRIPTION) %>% summarise(count=n()) %>% #summarise lists the information you specify
-  group_by(CODE, DESCRIPTION) %>% filter(year(month)>=2023 & length(unique(month))>10) %>% 
-  summarise(events=lm(count~month)$coefficients[2]) %>% arrange(desc(events))
+#Regressions for all conditions over time ----
+condition_slopes <- mutate(dat$conditions.csv, month=floor_date(START, unit = "month")) %>% #convert encounter dates to months
+  group_by(month, CODE, DESCRIPTION) %>% summarise(count=n()) %>% #counts how many times each condition occurs each month
+  group_by(CODE, DESCRIPTION) %>% filter(year(month)>=2023 & length(unique(month))>10) %>% #fits straight line to monthly cuonts for each condition
+  summarise(events=lm(count~month)$coefficients[2]) %>% arrange(desc(events)) # extracts slope of that line and ranks in descending order
 
 plot(condition_slopes$events, type="l")
 abline(v=25,col="blue") #25 reasonable cut-off for conditions
@@ -110,16 +107,27 @@ top_condition_slopes <- head(condition_slopes, 25)$CODE #empty space before comm
 #DESCRIPTION and CODE  mapping ----
 code_map<-dat$conditions.csv[c("CODE","DESCRIPTION")] %>% unique() %>% #removes duplicate rows
   {setNames(.$DESCRIPTION,.$CODE)} #no longer dataframe but now a vector with names, curly brakets
+# the period represents the entire data frame coing from previous step
+# setNames(object, nm), first argument objects = values, second argument nm = vector names
 
 #search within df code_map without having to call the dataframe
 code_map<-dat$conditions.csv[c("CODE","DESCRIPTION")] %>% unique() %>% #removes duplicate rows
   with(setNames(DESCRIPTION, CODE))#turns 1st argument into an environment to just include variable, ie columns, in the dataframe
 
-#code to co-occurence, pulls all the conditions a patient has that falls in the top conditions
-paitent_codes <- filter(dat$conditions.csv,CODE %in% top_condition_slopes)%>% #%in% filters for a value within a vector, unique keeps all different rows,
-  distinct(PATIENT, CODE) %>% #drops columns not referencing and condensing to columns of interest
-  mutate(present=1) %>% 
+#code to co-occurence ----
+#pulls all the conditions a patient has that falls in the top conditions
+paitent_codes <- filter(dat$conditions.csv,CODE %in% top_condition_slopes) %>%
+        #%in% filters for a value within a vector, unique keeps all different rows,
+        #filters to only keep rows whose CODE is in the top conditions
+  distinct(PATIENT, CODE) %>%
+    #drops columns not referencing and condensing to columns of interest
+    #keep only unique patient-condition pairs
+    #answers whether patient had the condition, not how many times
+  mutate(present=1) %>% #adds new column called present, where 1 indicates patient has condition
   pivot_wider(names_from = CODE, values_from= present, values_fill = 0 )
+    #converts from long format to wide format
+    #each condition code is a made a column, where values to fill each column are 0 or 1 to indicate if a patient has the condition
+
 encounter_codes <- filter(dat$conditions.csv,CODE %in% top_condition_slopes)%>% #%in% filters for a value within a vector, unique keeps all different rows,
   distinct(ENCOUNTER, CODE) %>% 
   mutate(present=1) %>% 
