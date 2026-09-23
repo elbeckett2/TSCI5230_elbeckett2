@@ -54,3 +54,4 @@ local.config.R
 .RData
 .Ruserdata
 prelim_age.R
+.DS_Store
