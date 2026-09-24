@@ -154,7 +154,11 @@ encounter_codes <- filter(dat$conditions.csv,CODE %in% top_condition_slopes)%>% 
 #determine number of unique patient IDs and construct list of pairwaise combinations of codes
 n_patients<-nrow(dat$patients.csv) #7946 total number of patients
 n_encounters<-nrow(dat$encounters.csv) #number of encounters
-code_combos <- combn(top_condition_slopes, 2, simplify = FALSE) #all possible pairwise conditions in list form
+code_combos <- combn(top_condition_slopes, 2, simplify = FALSE)
+  #all possible pairwise conditions in list form
+    #combn(x, m), where x = vector of items, m = number of items per combination
+    #from conditions with top greatest slopes, generate every possible combination pairs
+    #simplify=FALSE makes the output a list instead of a matrix
 
 #Create function to quantify number of conditions ----
 # when conditions overlap by a pair basis, output as square matrix
@@ -162,22 +166,42 @@ code_combos <- combn(top_condition_slopes, 2, simplify = FALSE) #all possible pa
 # the two conditions co-occur than would be expected if they were independent
 # (lift = observed co-occurrence rate / expected co-occurrence rate under independence)
 fn_lift <- function(xx, code_source=patient_codes,denom=n_patients){
-  counta <- sum(code_source[[ xx[1] ]]) #[[]] pull item by position, [] pulls item within list
+  # () defines arguments/the inputs, {} define body of the function/what to do with inputs, "xx" are argument names defined by programmer
+  counta <- sum(code_source[[ xx[1] ]])
+  #[[]] pull element stored inside container, [] give subset of container
+  ## [[]] necessary to give function the inputs which are a vector, vs subset
   countb <- sum(code_source[[ xx[2] ]])
   expected <- counta*countb/denom
-  observed <- sum(code_source[[ xx[1] ]]*code_source[[ xx[2] ]])
+  observed <- sum(code_source[[ xx[1] ]]*code_source[[ xx[2] ]]) #multiply bc only co-occurences will give 1
   out <- if(expected == 0){1} else{observed/expected}
-  data.frame(cnd_a=xx[],cnd_b=rev(xx[]),lift=out) #create square matrix
+    #prevent division by zero
+    #output ratio of observed to expected to determine if observed is more than expected
+  data.frame(cnd_a=xx[],cnd_b=rev(xx[]),lift=out) # this last line is the output of the function
+  # arguments in data.frame are each a column with the defined values that fill it
   # produces 2 rows per pair (codeA,codeB) and (codeB,codeA) with the same lift value,
   # so the resulting long table can be pivoted into a symmetric square matrix later
 }
 
 #Create lift matrix for co-occurrence of conditions and heat map ----
 patient_lift_matrix <- map(code_combos, fn_lift) %>% list_rbind() %>%
-  mutate(cnd_a=code_map[cnd_a]) %>%  # replace condition CODE with its human-readable DESCRIPTION
-  mutate(cnd_b=code_map[cnd_b]) %>% 
-  xtabs(lift~cnd_a+cnd_b,data=.) # reshape long (cnd_a, cnd_b, lift) table into a square matrix
-heatmap(log1p(patient_lift_matrix), symm=T,scale="none",col=hcl.colors(50, "RdBu", rev=TRUE)) # visualize co-occurrence strength; log1p compresses skew
+  # map(object, function) is a purr pckg that applies the same function to every element of a vector or list
+  # takes each element of code_combos and runs fn_lift() on it
+  # map function returns list of dataframes, where fn_lift returns a data frame
+  # list_rbind takes each dataframe in the list and row-binds them together to create a single df
+  mutate(cnd_a=code_map[cnd_a]) %>%
+  mutate(cnd_b=code_map[cnd_b]) %>%
+  # replace condition CODE with its human-readable DESCRIPTION
+    # code_map[cnd_a] uses the values in cnd_a as names to look up in code_map, which is named vector
+    # cnd_a= will replace the codes in cnd_a with the corresponding descriptions identified using code_map
+  xtabs(lift~cnd_a+cnd_b,data=.)
+  # reshape long (cnd_a, cnd_b, lift) table into a square matrix
+    # cnd_a is first and is placed on rows
+    # cnd_b is second and placed on columns
+    # fill cells using lift
+    # . means to use the obct that came from the previous pipe step
+heatmap(log1p(patient_lift_matrix), symm=T,scale="none",col=hcl.colors(50, "RdBu", rev=TRUE))
+  # visualize co-occurrence strength
+  # log1p compresses skew
 
 rownames(patient_lift_matrix)
 colnames(patient_lift_matrix)
@@ -189,33 +213,44 @@ code_map[rownames(patient_lift_matrix)]
 encounter_lift_matrix <- map(code_combos, fn_lift, code_source=encounter_codes, denom=n_encounters) %>% list_rbind() %>%
   mutate(cnd_a=code_map[cnd_a]) %>% 
   mutate(cnd_b=code_map[cnd_b]) %>% 
-  xtabs(lift~cnd_a+cnd_b,data=.) #xtabs cross tabulates a data frame
+  xtabs(lift~cnd_a+cnd_b,data=.)
 e_map<-heatmap(log1p(encounter_lift_matrix), symm=T,scale="none",col=hcl.colors(50, "RdBu", rev=TRUE)) # heatmap() also returns row/col dendrogram ordering, captured here in e_map
+
 colnames(encounter_lift_matrix)[e_map$colInd] # get condition names in the order the heatmap's clustering placed them
 
 # manually pick out conditions that cluster together at the "systemic" end of the
-# heatmap's dendrogram ordering (positions 18-25 in the clustered column order)
 systemic_conditions<-colnames(encounter_lift_matrix)[e_map$colInd][18:25]
-# NOTE: 18:25 is a hard-coded index range based on visually inspecting where the
-# systemic-looking cluster falls in this particular heatmap - if code_combos,
-# top_condition_slopes, or the clustering order change, this range will silently
-# point at the wrong conditions instead of erroring
+  # heatmap's dendrogram ordering (positions 18-25 in the clustered column order)
+    # [e_map$colInd] reorders the column names called from encounter_lift_matrix
+  # NOTE: 18:25 is a hard-coded index range based on visually inspecting where the
+    # systemic-looking cluster falls in this particular heatmap - if code_combos,
+    # top_condition_slopes, or the clustering order change, this range will silently
+    # point at the wrong conditions instead of erroring
 
-# take the clustered column order, drop positions 3-5 (presumably a small
-# outlier/unclustered group not wanted in either bucket), then remove anything
-# already classified as systemic above - what's left is treated as "local" conditions
+# manually pick out conditions that are not systemic or or do not overlap with systemic
 local_conditions<-colnames(encounter_lift_matrix)[e_map$colInd][-(3:5)] %>% setdiff(systemic_conditions)
-# NOTE: same fragility as above - -(3:5) is also a hard-coded index range tied to
-# this specific heatmap's clustering order, so it needs re-checking any time the
-# underlying condition list or clustering changes
+  # take the clustered column order, drop positions 3-5 (presumably a small
+    # outlier/unclustered group not wanted in either bucket), then remove anything
+    # already classified as systemic above - what's left is treated as "local" conditions
+      # setdiff(x, y) returns elements in x that are not in y, piped object becomes 1st argument
+  # NOTE: same fragility as above - -(3:5) is also a hard-coded index range tied to
+    # this specific heatmap's clustering order, so it needs re-checking any time the
+    # underlying condition list or clustering changes
 
 #Summarize conditions by encounter ----
-group_by(dat$conditions.csv, ENCOUNTER, PATIENT) %>% summarize(local=length(intersect(local_conditions,DESCRIPTION))
-                                                      , systemic=length(intersect(systemic_conditions,DESCRIPTION))
-                                                      , first_condition_start=min(START,na.rm = TRUE), last_condition_start=max(START,na.rm = TRUE)
-                                                        #na.rm means remove entries with missing values
-)
-# group_by slices up conditions df by encounter
-# pass it to summarize to 
+group_by(dat$conditions.csv, ENCOUNTER, PATIENT) %>%
+  # group_by slices up conditions df into groups that share the same encounter and patient
+  # pass it to summarize which runs arguments for each group
+  summarize(local=length(intersect(local_conditions,DESCRIPTION))
+            # create column called local
+            # intersect (y,x) return values appearing in both vectors
+            , systemic=length(intersect(systemic_conditions,DESCRIPTION))
+            , earliest_condition_start=min(START,na.rm = TRUE)
+            # earliest condition start recorded in 
+            #na.rm means remove entries with missing values
+            , latest_condition_start=max(START,na.rm = TRUE)
+            # most recent condition start recorded in encounter
+                                                      )
+ 
 
 
