@@ -238,19 +238,206 @@ local_conditions<-colnames(encounter_lift_matrix)[e_map$colInd][-(3:5)] %>% setd
     # underlying condition list or clustering changes
 
 #Summarize conditions by encounter ----
-group_by(dat$conditions.csv, ENCOUNTER, PATIENT) %>%
+encounter_summary<-group_by(dat$conditions.csv, ENCOUNTER, PATIENT) %>%
   # group_by slices up conditions df into groups that share the same encounter and patient
   # pass it to summarize which runs arguments for each group
   summarize(local=length(intersect(local_conditions,DESCRIPTION))
             # create column called local
             # intersect (y,x) return values appearing in both vectors
             , systemic=length(intersect(systemic_conditions,DESCRIPTION))
-            , earliest_condition_start=min(START,na.rm = TRUE)
+            , first_condition_start=min(START,na.rm = TRUE)
             # earliest condition start recorded in 
             #na.rm means remove entries with missing values
-            , latest_condition_start=max(START,na.rm = TRUE)
+            , last_condition_start=max(START,na.rm = TRUE)
             # most recent condition start recorded in encounter
+            , condition_type = case_when(
+              local > 0 & systemic >0 ~ "both",
+              local > 0 ~ "local",
+              systemic > 0 ~ "systemic",
+              TRUE ~ "neither"
+            )
                                                       )
- 
+
+#first_condition_start is a good proxy for encounter date 
+# find encounters where the conditions did not all start on the same date
+subset(encounter_summary,first_condition_start!=last_condition_start & condition_type!="neither")
+# != means not equal to
+# looking at scenarios where the start date for the earliest and most recent conditions are different
+# confirm that the dates are not that different and so using the first condition start date is acceptable
+
+# look at how many local/systemic conditions tend to occur in an encounter
+#Most encounters have more or at least 4 different systemic conditions
+subset(encounter_summary,systemic > 0)$systemic %>% hist()
+# create histogram of systemic conditions
+
+# Most encounters have 1 local condition, none have more than 3
+subset(encounter_summary,local > 0)$local %>% hist()
+# create a histogram of local conditioins
+
+# count encounters containing systemic conditions, local conditions, or both
+sum(encounter_summary$systemic > 0) #no. encounters with systemic conditions
+sum(encounter_summary$local > 0) #no. encounters with local conditions
+sum((encounter_summary$systemic > 0)*(encounter_summary$local > 0)) #no encounters have both local and systemic conditions 
+
+# examine the distributions and overlap
+#contingency table for systemic and local conditions, do all patients have local conditions
+with(encounter_summary,table(local))
+with(encounter_summary,table(systemic))
+with(encounter_summary,table(local,systemic))
+encounter_summary$condition_type %>% table() %>% prop.table()
+# with(data, expression), used to not repeatedly type encounter_summary$
+# prop. table changes from raw data to percentage
+
+# Create Patient summary ----
+patient_summary <- group_by(encounter_summary,PATIENT) %>% # group_by(dataframe, column)
+  summarize(n_local = sum(local > 0)
+            ,n_systemic = sum(systemic > 0)
+            ,date_systemic = if(n_systemic > 0){min(first_condition_start[systemic>0])} else {NA}
+            ,date_local = if(n_local > 0){min(first_condition_start[local>0])} else {NA}
+            ,condition_order = case_when(
+              n_local > 0 & n_systemic == 0 ~ "local only",
+              n_systemic > 0 & n_local == 0 ~ "systemic only",
+              n_local > 0 & n_systemic > 0 & date_local < date_systemic ~ "local first",
+              n_local > 0 & n_systemic > 0 & date_systemic < date_local ~ "systemic first",
+              n_local > 0 & n_systemic > 0 & date_local == date_systemic ~ "same date",
+              TRUE ~ "neither"
+            )
+            
+            ,interval = as.numeric(difftime(date_systemic, date_local, units = "days")) #convert to numeric value
+            #,debug = {if(n_local+n_systemic > 0){browser()}
+            #  0
+            # }
+) %>%
+  left_join(dat$patients.csv,by=c(PATIENT='Id'))
+
+# summarize patient-level patterns
+hist(patient_summary$n_local
+     ,breaks=30
+     ,main="Number of Local Conditions per Patient"
+     ,xlab="Number of Local Conditions")
+
+hist(patient_summary$n_systemic
+     ,breaks=30
+     ,main="Number of Systemic Conditions per Patient"
+     ,xlab="Number of Systemic Conditions")
+
+#period between local and systemic encounters most frequently between 0-20 days
+hist(patient_summary$interval
+     ,breaks=100
+     ,main="Interval Between Systemic and Local Conditions"
+     ,xlab="Interval (days)")
+
+barplot(table(patient_summary$condition_order)
+        ,main="Condition Order per Patient"
+        ,ylab="Number of Patients"
+        ,las=2)
+
+#History of disease spread ----
+
+# earliest local and systemic dates in the dataset
+patient_summary %>%
+  summarize(date_local=min(date_local,na.rm=T)
+            ,date_systemic=min(date_systemic,na.rm=T))
+
+# earliest local and systemic dates by state
+group_by(patient_summary,STATE) %>%
+  summarize(date_local=min(date_local,na.rm=T)
+            ,date_systemic=min(date_systemic,na.rm=T)) %>%
+  arrange(date_local,date_systemic)
+
+# earliest local and systemic dates by Texas city
+subset(patient_summary,STATE=="Texas" & !is.na(date_local)) %>%
+  group_by(CITY) %>%
+  summarize(date_local=min(date_local,na.rm=T) # have warning message
+            ,date_systemic=min(date_systemic,na.rm=T)) %>%
+  arrange(date_local,date_systemic)
+
+
+#Create local/systemic patient and encounter lists ----
+local_encounters <- subset(encounter_summary,local>0)$ENCOUNTER
+systemic_encounters <- subset(encounter_summary,systemic>0)$ENCOUNTER
+
+local_patients <- subset(encounter_summary,local>0)$PATIENT %>% unique()
+systemic_patients <- subset(encounter_summary,systemic>0)$PATIENT %>% unique()
+
+
+#Procedures ----
+subset(dat$procedures.csv,ENCOUNTER %in% local_encounters)$DESCRIPTION %>% table() %>% sort()
+subset(dat$procedures.csv,ENCOUNTER %in% systemic_encounters)$DESCRIPTION %>% table() %>% sort()
+
+# Observations ----
+subset(dat$observations.csv,ENCOUNTER %in% local_encounters)$DESCRIPTION %>% table() %>% sort()
+subset(dat$observations.csv,ENCOUNTER %in% systemic_encounters)$DESCRIPTION %>% table() %>% sort()
+
+# Number of records within each encounter for local and systemic conditions
+subset(dat$observations.csv,ENCOUNTER %in% local_encounters) %>% nrow()
+
+# Creating a function to number the rows for encounter types ----
+fn_rows_encounter <- function(xx)
+{summarise(
+  dat[[xx]],
+  source = xx,
+  rows = n(),
+  rows_local = sum(ENCOUNTER %in% local_encounters, na.rm = TRUE),
+  rows_systemic = sum(ENCOUNTER %in% systemic_encounters, na.rm = TRUE),
+  encounters = length(unique(ENCOUNTER)),
+  encounters_local = length(intersect(ENCOUNTER,local_encounters)),
+  encounters_systemic = length(intersect(ENCOUNTER,systemic_encounters)),
+  rows_per_encounter = rows/encounters,
+  local_rows_per_encounter = rows_local/encounters_local,
+  systemic_rows_per_encounter = rows_systemic/encounters_systemic
+)
+}
+
+# Counts of condition types by encounter for all datasets in dat
+names(dat) %>% setdiff(c("patients.csv","encounters.csv")) %>% sapply(fn_rows, simplify = FALSE) %>% bind_rows()
+# sapply do not turn into matrix
+
+# Creating a function to number the rows for clinical phenotypes of patients ----
+fn_rows_patient <- function(xx)
+{summarise(
+  dat[[xx]],
+  source = xx,
+  rows = n(),
+  rows_local = sum(PATIENT %in% local_patients, na.rm = TRUE),
+  rows_systemic = sum(PATIENT %in% systemic_patients, na.rm = TRUE),
+  patients = length(unique(PATIENT)),
+  patient_local = length(intersect(PATIENT,local_patients)),
+  patient_systemic = length(intersect(PATIENT,systemic_patients)),
+  rows_per_patient = rows/patients,
+  local_rows_per_patient = rows_local/patient_local,
+  systemic_rows_per_patient = rows_systemic/patient_systemic
+)
+}
+
+# Counts of condition types by patient for all datasets in dat
+names(dat) %>% setdiff(c("patients.csv","encounters.csv")) %>% sapply(fn_rows_patient, simplify = FALSE) %>% bind_rows()
+# sapply do not turn into matrix
+
+
+
+
+
+# Standardize dataframes (except pateints.csv lacks same column naming system) ----
+transmute(dat$medications.csv, PATIENT, ENCOUNTER, CODE, DESCRIPTION, source = "medications") %>% filter(!is.na(CODE)) %>% View() # only see non-missing entries
+transmute(dat$medications.csv, PATIENT, ENCOUNTER, CODE=REASONCODE, DESCRIPTION=REASONDESCRIPTION, source = "medications_reasons") %>% filter(!is.na(CODE)) %>% View()
+
+fn_standardize <- function(xx){
+  if("SSN" %in% names(xx)) {return(NULL)}
+  if("Id" %in% names(xx) & !"ENCOUNTER" %in% names(xx)) {xx <- mutate(xx, ENCOUNTER=Id)}
+  out <- transmute(xx, PATIENT, ENCOUNTER, CODE=as.character(CODE), DESCRIPTION, subtype="CODE") %>% filter(!is.na(CODE))
+  if(all(c("REASONCODE","REASONDESCRIPTION") %in% names(xx))){
+    out <- bind_rows(out, transmute(xx, PATIENT, ENCOUNTER, CODE=as.character(REASONCODE), DESCRIPTION=REASONDESCRIPTION,
+                                    subtype = "reason") %>% filter(!is.na(CODE)))
+  }
+  # alternative if(length(intersect(colnames(xx),c("REASONCODE","REASONDESCRIPTION")))==2){}
+  #browser()
+  return(out)
+}
+
+# test fn_standardize
+fact_table <- sapply(dat, fn_standardize, simplify=FALSE) %>% bind_rows(.id = "type")
+
+
 
 
