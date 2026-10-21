@@ -390,7 +390,7 @@ fn_rows_encounter <- function(xx)
 }
 
 # Counts of condition types by encounter for all datasets in dat
-names(dat) %>% setdiff(c("patients.csv","encounters.csv")) %>% sapply(fn_rows, simplify = FALSE) %>% bind_rows()
+names(dat) %>% setdiff(c("patients.csv","encounters.csv")) %>% sapply(fn_rows_encounter, simplify = FALSE) %>% bind_rows()
 # sapply do not turn into matrix
 
 # Creating a function to number the rows for clinical phenotypes of patients ----
@@ -414,10 +414,6 @@ fn_rows_patient <- function(xx)
 names(dat) %>% setdiff(c("patients.csv","encounters.csv")) %>% sapply(fn_rows_patient, simplify = FALSE) %>% bind_rows()
 # sapply do not turn into matrix
 
-
-
-
-
 # Standardize dataframes (except pateints.csv lacks same column naming system) ----
 transmute(dat$medications.csv, PATIENT, ENCOUNTER, CODE, DESCRIPTION, source = "medications") %>% filter(!is.na(CODE)) %>% View() # only see non-missing entries
 transmute(dat$medications.csv, PATIENT, ENCOUNTER, CODE=REASONCODE, DESCRIPTION=REASONDESCRIPTION, source = "medications_reasons") %>% filter(!is.na(CODE)) %>% View()
@@ -435,9 +431,37 @@ fn_standardize <- function(xx){
   return(out)
 }
 
-# test fn_standardize
+# Create a fact table of standardized codes and descriptions ----
 fact_table <- sapply(dat, fn_standardize, simplify=FALSE) %>% bind_rows(.id = "type")
 
+# Determine the number of encounters with a specified code "agitation"
+summarise(fact_table, encounter_no = length(unique(ENCOUNTER)),
+          encounter_w_code = length(unique(ENCOUNTER[CODE == "24199005"])),
+          systemic = length(systemic_encounters),
+          systemic_w_code = length(intersect(ENCOUNTER[CODE == "24199005"],systemic_encounters)))
+
+# Create a function to determine number of encounters for each code (medication, allergy, care plan, etc.)
+fn_encounter_codes <- function(xx){
+  encounter_w_code <- length(unique(fact_table$ENCOUNTER[fact_table$CODE == xx]))
+  systemic_w_code <- length(intersect(fact_table$ENCOUNTER[fact_table$CODE == xx],systemic_encounters))
+  out <- c(systemic_w_code = systemic_w_code, encounter_w_code = encounter_w_code)
+  return(out)
+}
+
+# test if fn_encounter_codes works on a test code (agitation)
+fn_encounter_codes("24199005")
+
+# Apply fn_encounter_codes to all unique codes from fact_table
+encounter_code_tallies <- sapply(unique(fact_table$CODE), fn_encounter_codes, simplify=FALSE) %>% bind_rows %>% View()
+
+# Update fn_encounter_code
+fn_encounter_code_2 <- function(xx){
+  encounter_w_code <- length(unique(fact_table$ENCOUNTER[fact_table$CODE == xx]))
+  systemic_w_code <- length(intersect(fact_table$ENCOUNTER[fact_table$CODE == xx],systemic_encounters))
+  out <- c(systemic_w_code = systemic_w_code, encounter_w_code = encounter_w_code)
+  
+  return(out)
+}
 
 
 
