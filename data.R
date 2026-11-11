@@ -30,6 +30,7 @@ debug <- 0; # debug flag: controls how much output/warnings/messages knitr shows
 knitr::opts_chunk$set(echo=debug>-1, warning=debug>0, message=debug>0, class.output="scroll-20", attr.output='style="max-height: 150px; overflow-y: auto;"');
 
 #Load tools ----
+#library(reticulate)
 library(rio);# simple command for importing and exporting
 library(pander); # format tables
 library(printr); # set limit on number of lines printed
@@ -666,6 +667,168 @@ filter(new_patient_code_tallies
 filter(new_patient_code_tallies, all_patients_w_code > 100) %>%
   pull(local_likelihood_ratio) %>% log() %>%
   hist(xlim = c(-2,8), breaks=100)
+
+# new_encounter_code_tallies <- fact_table %>%
+#   group_by(type, subtype) %>%
+#   summarise(all_encounters_w_code = n_distinct(ENCOUNTER)
+#             , local_encounters_w_code =
+#               sum(unique(ENCOUNTER) %in% local_encounters)
+#             , systemic_encounters_w_code =
+#               sum(unique(ENCOUNTER) %in% systemic_encounters)
+#             , .groups = "drop")
+
+# HW: Create versions of patient/encounter tallies that only aggregates on type, not on CODE or DESCRIPTION.
+# Careful, you'll need to change all the columns that reference the CODE column to instead referencing type
+
+# HW: tallies aggregated on type only (not CODE / DESCRIPTION) ----
+# Paste below the existing new_encounter_code_tallies / new_patient_code_tallies blocks.
+# Every "code" in a column name becomes "type", because the unit being counted is now
+# "the encounter/patient has at least one row from this type of file".
+#
+# NOTE: group by `type` only. Leaving `subtype` in would split medications into
+# "CODE" and "reason" rows and no longer match the HW. n_distinct()/unique() already
+# de-duplicate across subtypes within a type.
+
+# Encounters by type ----
+# Claude (Sonnet 5.5 Medium)
+encounter_type_tallies <- fact_table %>%
+  group_by(type) %>%
+  summarise(all_encounters_w_type = n_distinct(ENCOUNTER)
+            , local_encounters_w_type =
+              sum(unique(ENCOUNTER) %in% local_encounters)
+            , systemic_encounters_w_type =
+              sum(unique(ENCOUNTER) %in% systemic_encounters)
+            , .groups = "drop") %>%
+  mutate(total_all_encounters = nrow(dat$encounters.csv)
+         , total_local_encounters = length(local_encounters)
+         , total_systemic_encounters = length(systemic_encounters)
+         , fraction_all_encounters_w_type =
+           all_encounters_w_type/total_all_encounters
+         , fraction_local_encounters_w_type =
+           local_encounters_w_type/total_local_encounters
+         , fraction_systemic_encounters_w_type =
+           systemic_encounters_w_type/total_systemic_encounters
+         # Local 2x2 cells
+         , local_encounters_no_type =
+           total_local_encounters - local_encounters_w_type
+         , nonlocal_encounters_w_type =
+           all_encounters_w_type - local_encounters_w_type
+         , nonlocal_encounters_no_type = total_all_encounters -
+           all_encounters_w_type - total_local_encounters +
+           local_encounters_w_type
+         # Systemic 2x2 cells
+         , systemic_encounters_no_type =
+           total_systemic_encounters - systemic_encounters_w_type
+         , nonsystemic_encounters_w_type =
+           all_encounters_w_type - systemic_encounters_w_type
+         , nonsystemic_encounters_no_type = total_all_encounters -
+           all_encounters_w_type - total_systemic_encounters +
+           systemic_encounters_w_type
+         # Haldane corrections
+         , haldane_local_encounters_w_type = local_encounters_w_type + 0.5
+         , haldane_local_encounters_no_type = local_encounters_no_type + 0.5
+         , haldane_nonlocal_encounters_w_type = nonlocal_encounters_w_type + 0.5
+         , haldane_nonlocal_encounters_no_type = nonlocal_encounters_no_type + 0.5
+         , haldane_systemic_encounters_w_type = systemic_encounters_w_type + 0.5
+         , haldane_systemic_encounters_no_type = systemic_encounters_no_type + 0.5
+         , haldane_nonsystemic_encounters_w_type = nonsystemic_encounters_w_type + 0.5
+         , haldane_nonsystemic_encounters_no_type = nonsystemic_encounters_no_type + 0.5
+         # Proportions, LR and OR: local
+         , local_type_prevalence = haldane_local_encounters_w_type /
+           (haldane_local_encounters_w_type + haldane_local_encounters_no_type)
+         , nonlocal_type_absence = haldane_nonlocal_encounters_no_type /
+           (haldane_nonlocal_encounters_w_type + haldane_nonlocal_encounters_no_type)
+         , local_likelihood_ratio = local_type_prevalence /
+           (1 - nonlocal_type_absence)
+         , local_OR = haldane_local_encounters_w_type *
+           haldane_nonlocal_encounters_no_type /
+           (haldane_local_encounters_no_type * haldane_nonlocal_encounters_w_type)
+         # Proportions, LR and OR: systemic
+         , systemic_type_prevalence = haldane_systemic_encounters_w_type /
+           (haldane_systemic_encounters_w_type + haldane_systemic_encounters_no_type)
+         , nonsystemic_type_absence = haldane_nonsystemic_encounters_no_type /
+           (haldane_nonsystemic_encounters_w_type + haldane_nonsystemic_encounters_no_type)
+         , systemic_likelihood_ratio = systemic_type_prevalence /
+           (1 - nonsystemic_type_absence)
+         , systemic_OR = haldane_systemic_encounters_w_type *
+           haldane_nonsystemic_encounters_no_type /
+           (haldane_systemic_encounters_no_type * haldane_nonsystemic_encounters_w_type)) %>%
+  arrange(desc(local_likelihood_ratio))
+
+# Patients by type ----
+# Claude (Sonnet 5.5 Medium)
+patient_type_tallies <- fact_table %>%
+  group_by(type) %>%
+  summarise(all_patients_w_type = n_distinct(PATIENT)
+            , local_patients_w_type =
+              sum(unique(PATIENT) %in% local_patients)
+            , systemic_patients_w_type =
+              sum(unique(PATIENT) %in% systemic_patients)
+            , .groups = "drop") %>%
+  mutate(total_all_patients = nrow(dat$patients.csv)
+         , total_local_patients = length(local_patients)
+         , total_systemic_patients = length(systemic_patients)
+         , fraction_all_patients_w_type =
+           all_patients_w_type/total_all_patients
+         , fraction_local_patients_w_type =
+           local_patients_w_type/total_local_patients
+         , fraction_systemic_patients_w_type =
+           systemic_patients_w_type/total_systemic_patients
+         # Local 2x2 cells
+         , local_patients_no_type =
+           total_local_patients - local_patients_w_type
+         , nonlocal_patients_w_type =
+           all_patients_w_type - local_patients_w_type
+         , nonlocal_patients_no_type = total_all_patients -
+           all_patients_w_type - total_local_patients +
+           local_patients_w_type
+         # Systemic 2x2 cells
+         , systemic_patients_no_type =
+           total_systemic_patients - systemic_patients_w_type
+         , nonsystemic_patients_w_type =
+           all_patients_w_type - systemic_patients_w_type
+         , nonsystemic_patients_no_type = total_all_patients -
+           all_patients_w_type - total_systemic_patients +
+           systemic_patients_w_type
+         # Haldane corrections
+         , haldane_local_patients_w_type = local_patients_w_type + 0.5
+         , haldane_local_patients_no_type = local_patients_no_type + 0.5
+         , haldane_nonlocal_patients_w_type = nonlocal_patients_w_type + 0.5
+         , haldane_nonlocal_patients_no_type = nonlocal_patients_no_type + 0.5
+         , haldane_systemic_patients_w_type = systemic_patients_w_type + 0.5
+         , haldane_systemic_patients_no_type = systemic_patients_no_type + 0.5
+         , haldane_nonsystemic_patients_w_type = nonsystemic_patients_w_type + 0.5
+         , haldane_nonsystemic_patients_no_type = nonsystemic_patients_no_type + 0.5
+         # Proportions, LR and OR: local
+         , local_type_prevalence = haldane_local_patients_w_type /
+           (haldane_local_patients_w_type + haldane_local_patients_no_type)
+         , nonlocal_type_absence = haldane_nonlocal_patients_no_type /
+           (haldane_nonlocal_patients_w_type + haldane_nonlocal_patients_no_type)
+         , local_likelihood_ratio = local_type_prevalence /
+           (1 - nonlocal_type_absence)
+         , local_OR = haldane_local_patients_w_type *
+           haldane_nonlocal_patients_no_type /
+           (haldane_local_patients_no_type * haldane_nonlocal_patients_w_type)
+         # Proportions, LR and OR: systemic
+         , systemic_type_prevalence = haldane_systemic_patients_w_type /
+           (haldane_systemic_patients_w_type + haldane_systemic_patients_no_type)
+         , nonsystemic_type_absence = haldane_nonsystemic_patients_no_type /
+           (haldane_nonsystemic_patients_w_type + haldane_nonsystemic_patients_no_type)
+         , systemic_likelihood_ratio = systemic_type_prevalence /
+           (1 - nonsystemic_type_absence)
+         , systemic_OR = haldane_systemic_patients_w_type *
+           haldane_nonsystemic_patients_no_type /
+           (haldane_systemic_patients_no_type * haldane_nonsystemic_patients_w_type)) %>%
+  arrange(desc(local_likelihood_ratio))
+
+# by name
+# Claude (Sonnet 5.5 Medium)
+encounter_type_tallies %>%
+  select(type, all_encounters_w_type, local_likelihood_ratio, local_OR, systemic_likelihood_ratio, systemic_OR)
+
+patient_type_tallies %>%
+  select(type, all_patients_w_type, local_likelihood_ratio, local_OR, systemic_likelihood_ratio, systemic_OR)
+
 
 
 
